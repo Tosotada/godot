@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2021 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2021 Godot Engine contributors (cf. AUTHORS.md).   */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -36,9 +36,10 @@
 #include "scene/gui/texture_rect.h"
 
 class EditorSpinSlider : public Range {
-	GDCLASS(EditorSpinSlider, Range)
+	GDCLASS(EditorSpinSlider, Range);
 
 	String label;
+	String suffix;
 	int updown_offset;
 	bool hover_updown;
 	bool mouse_hover;
@@ -48,6 +49,7 @@ class EditorSpinSlider : public Range {
 
 	bool mouse_over_spin;
 	bool mouse_over_grabber;
+	bool mousewheel_over_grabber;
 
 	bool grabbing_grabber;
 	int grabbing_from;
@@ -59,13 +61,15 @@ class EditorSpinSlider : public Range {
 	bool read_only;
 	float grabbing_spinner_dist_cache;
 	Vector2 grabbing_spinner_mouse_pos;
+	double pre_grab_value;
 
+	Popup *value_input_popup;
 	LineEdit *value_input;
 	bool value_input_just_closed;
 
 	void _grabber_gui_input(const Ref<InputEvent> &p_event);
 	void _value_input_closed();
-	void _value_input_entered(const String &);
+	void _value_input_submitted(const String &);
 	void _value_focus_exited();
 	bool hide_slider;
 	bool flat;
@@ -84,11 +88,14 @@ protected:
 	void _focus_entered();
 
 public:
-	String get_tooltip(const Point2 &p_pos) const;
+	String get_tooltip(const Point2 &p_pos) const override;
 
 	String get_text_value() const;
 	void set_label(const String &p_label);
 	String get_label() const;
+
+	void set_suffix(const String &p_suffix);
+	String get_suffix() const;
 
 	void set_hide_slider(bool p_hide);
 	bool is_hiding_slider() const;
@@ -101,7 +108,10 @@ public:
 
 	void set_custom_label_color(bool p_use_custom_label_color, Color p_custom_label_color);
 
-	virtual Size2 get_minimum_size() const;
+	void setup_and_show() { _focus_entered(); }
+	LineEdit *get_line_edit() { return value_input; }
+
+	virtual Size2 get_minimum_size() const override;
 	EditorSpinSlider();
 };
 

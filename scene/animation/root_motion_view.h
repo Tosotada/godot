@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2021 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2021 Godot Engine contributors (cf. AUTHORS.md).   */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -31,21 +31,24 @@
 #ifndef ROOT_MOTION_VIEW_H
 #define ROOT_MOTION_VIEW_H
 
-#include "scene/3d/visual_instance.h"
+#include "scene/3d/visual_instance_3d.h"
+#include "scene/resources/immediate_mesh.h"
+class RootMotionView : public VisualInstance3D {
+	GDCLASS(RootMotionView, VisualInstance3D);
 
-class RootMotionView : public VisualInstance {
-	GDCLASS(RootMotionView, VisualInstance)
 public:
-	RID immediate;
+	Ref<ImmediateMesh> immediate;
 	NodePath path;
-	float cell_size;
-	float radius;
-	bool use_in_game;
-	Color color;
-	bool first;
-	bool zero_y;
+	float cell_size = 1.0;
+	float radius = 10.0;
+	bool use_in_game = false;
+	Color color = Color(0.5, 0.5, 1.0);
+	bool first = true;
+	bool zero_y = true;
 
-	Transform accumulated;
+	Ref<Material> immediate_material;
+
+	Transform3D accumulated;
 
 private:
 	void _notification(int p_what);
@@ -55,7 +58,7 @@ public:
 	void set_animation_path(const NodePath &p_path);
 	NodePath get_animation_path() const;
 
-	void set_color(const Color &p_path);
+	void set_color(const Color &p_color);
 	Color get_color() const;
 
 	void set_cell_size(float p_size);
@@ -67,8 +70,8 @@ public:
 	void set_zero_y(bool p_zero_y);
 	bool get_zero_y() const;
 
-	virtual AABB get_aabb() const;
-	virtual PoolVector<Face3> get_faces(uint32_t p_usage_flags) const;
+	virtual AABB get_aabb() const override;
+	virtual Vector<Face3> get_faces(uint32_t p_usage_flags) const override;
 
 	RootMotionView();
 	~RootMotionView();

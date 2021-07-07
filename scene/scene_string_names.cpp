@@ -5,8 +5,8 @@
 /*                           GODOT ENGINE                                */
 /*                      https://godotengine.org                          */
 /*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
+/* Copyright (c) 2007-2021 Juan Linietsky, Ariel Manzur.                 */
+/* Copyright (c) 2014-2021 Godot Engine contributors (cf. AUTHORS.md).   */
 /*                                                                       */
 /* Permission is hereby granted, free of charge, to any person obtaining */
 /* a copy of this software and associated documentation files (the       */
@@ -30,10 +30,9 @@
 
 #include "scene_string_names.h"
 
-SceneStringNames *SceneStringNames::singleton = NULL;
+SceneStringNames *SceneStringNames::singleton = nullptr;
 
 SceneStringNames::SceneStringNames() {
-
 	_estimate_cost = StaticCString::create("_estimate_cost");
 	_compute_cost = StaticCString::create("_compute_cost");
 
@@ -42,7 +41,7 @@ SceneStringNames::SceneStringNames() {
 	doubledot = StaticCString::create("..");
 	draw = StaticCString::create("draw");
 	_draw = StaticCString::create("_draw");
-	hide = StaticCString::create("hide");
+	hidden = StaticCString::create("hidden");
 	visibility_changed = StaticCString::create("visibility_changed");
 	input_event = StaticCString::create("input_event");
 	shader = StaticCString::create("shader");
@@ -62,6 +61,8 @@ SceneStringNames::SceneStringNames() {
 	animation_finished = StaticCString::create("animation_finished");
 	animation_changed = StaticCString::create("animation_changed");
 	animation_started = StaticCString::create("animation_started");
+
+	pose_updated = StaticCString::create("pose_updated");
 
 	mouse_entered = StaticCString::create("mouse_entered");
 	mouse_exited = StaticCString::create("mouse_exited");
@@ -102,7 +103,7 @@ SceneStringNames::SceneStringNames() {
 	_update_scroll = StaticCString::create("_update_scroll");
 	_update_xform = StaticCString::create("_update_xform");
 
-	_clips_input = StaticCString::create("_clips_input");
+	_structured_text_parser = StaticCString::create("_structured_text_parser");
 
 	_proxgroup_add = StaticCString::create("_proxgroup_add");
 	_proxgroup_remove = StaticCString::create("_proxgroup_remove");
@@ -118,12 +119,6 @@ SceneStringNames::SceneStringNames() {
 
 	camera_entered = StaticCString::create("camera_entered");
 	camera_exited = StaticCString::create("camera_exited");
-
-	_body_enter_tree = StaticCString::create("_body_enter_tree");
-	_body_exit_tree = StaticCString::create("_body_exit_tree");
-
-	_area_enter_tree = StaticCString::create("_area_enter_tree");
-	_area_exit_tree = StaticCString::create("_area_exit_tree");
 
 	_input = StaticCString::create("_input");
 	_input_event = StaticCString::create("_input_event");
@@ -148,7 +143,7 @@ SceneStringNames::SceneStringNames() {
 	v_offset = StaticCString::create("v_offset");
 
 	transform_pos = StaticCString::create("position");
-	transform_rot = StaticCString::create("rotation_degrees");
+	transform_rot = StaticCString::create("rotation");
 	transform_scale = StaticCString::create("scale");
 
 	_update_remote = StaticCString::create("_update_remote");
@@ -159,16 +154,15 @@ SceneStringNames::SceneStringNames() {
 	area_entered = StaticCString::create("area_entered");
 	area_exited = StaticCString::create("area_exited");
 
-	has_point = StaticCString::create("has_point");
+	_has_point = StaticCString::create("_has_point");
 
 	line_separation = StaticCString::create("line_separation");
 
-	get_drag_data = StaticCString::create("get_drag_data");
-	drop_data = StaticCString::create("drop_data");
-	can_drop_data = StaticCString::create("can_drop_data");
+	_get_drag_data = StaticCString::create("_get_drag_data");
+	_drop_data = StaticCString::create("_drop_data");
+	_can_drop_data = StaticCString::create("_can_drop_data");
 
-	_im_update = StaticCString::create("_im_update");
-	_queue_update = StaticCString::create("_queue_update");
+	_im_update = StaticCString::create("_im_update"); // Sprite3D
 
 	baked_light_changed = StaticCString::create("baked_light_changed");
 	_baked_light_changed = StaticCString::create("_baked_light_changed");
@@ -180,6 +174,7 @@ SceneStringNames::SceneStringNames() {
 	_toggled = StaticCString::create("_toggled");
 
 	frame_changed = StaticCString::create("frame_changed");
+	texture_changed = StaticCString::create("texture_changed");
 
 	playback_speed = StaticCString::create("playback/speed");
 	playback_active = StaticCString::create("playback/active");
@@ -195,12 +190,21 @@ SceneStringNames::SceneStringNames() {
 
 	_default = StaticCString::create("default");
 
-	for (int i = 0; i < MAX_MATERIALS; i++) {
+	_window_group = StaticCString::create("_window_group");
+	_window_input = StaticCString::create("_window_input");
+	window_input = StaticCString::create("window_input");
+	_window_unhandled_input = StaticCString::create("_window_unhandled_input");
 
-		mesh_materials[i] = "material/" + itos(i);
-	}
-
-	_mesh_changed = StaticCString::create("_mesh_changed");
-
+	theme_changed = StaticCString::create("theme_changed");
 	parameters_base_path = "parameters/";
+
+	tracks_changed = "tracks_changed";
+
+	shader_overrides_group = StaticCString::create("_shader_overrides_group_");
+	shader_overrides_group_active = StaticCString::create("_shader_overrides_group_active_");
+
+#ifndef DISABLE_DEPRECATED
+	use_in_baked_light = StaticCString::create("use_in_baked_light");
+	use_dynamic_gi = StaticCString::create("use_dynamic_gi");
+#endif
 }
