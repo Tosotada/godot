@@ -1,6 +1,15 @@
 /* clang-format off */
 [vertex]
 
+#ifdef USE_GLES_OVER_GL
+#define lowp
+#define mediump
+#define highp
+#else
+precision mediump float;
+precision mediump int;
+#endif
+
 layout(location = 0) in highp vec4 vertex_attrib;
 /* clang-format on */
 layout(location = 4) in vec2 uv_in;
@@ -8,13 +17,26 @@ layout(location = 4) in vec2 uv_in;
 out vec2 uv_interp;
 
 void main() {
-
 	uv_interp = uv_in;
 	gl_Position = vertex_attrib;
 }
 
 /* clang-format off */
 [fragment]
+
+#ifdef USE_GLES_OVER_GL
+#define lowp
+#define mediump
+#define highp
+#else
+#if defined(USE_HIGHP_PRECISION)
+precision highp float;
+precision highp int;
+#else
+precision mediump float;
+precision mediump int;
+#endif
+#endif
 
 uniform highp samplerCube source_cube; //texunit:0
 /* clang-format on */
@@ -26,7 +48,6 @@ uniform highp float z_near;
 uniform highp float bias;
 
 void main() {
-
 	highp vec3 normal = vec3(uv_interp * 2.0 - 1.0, 0.0);
 	/*
 	if (z_flip) {
@@ -50,8 +71,8 @@ void main() {
 		normal.z = -normal.z;
 	}
 
-	//normal = normalize(vec3(uv_interp * 2.0 - 1.0, 1.0));
-	float depth = texture(source_cube, normal).r;
+	//normal = normalize(vec3( uv_interp * 2.0 - 1.0, 1.0 ));
+	float depth = textureCube(source_cube, normal).r;
 
 	// absolute values for direction cosines, bigger value equals closer to basis axis
 	vec3 unorm = abs(normal);
@@ -74,6 +95,6 @@ void main() {
 	float depth_fix = 1.0 / dot(normal, unorm);
 
 	depth = 2.0 * depth - 1.0;
-	float linear_depth = 2.0 * z_near * z_far / (z_far + z_near - depth * (z_far - z_near));
-	gl_FragDepth = (linear_depth * depth_fix + bias) / z_far;
+	float linear_depth = 2.0 * z_near * z_far / (z_far + z_near + depth * (z_far - z_near));
+	gl_FragDepth = (z_far - (linear_depth * depth_fix + bias)) / z_far;
 }

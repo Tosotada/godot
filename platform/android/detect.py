@@ -1,12 +1,14 @@
 import os
-import sys
-import string
 import platform
-from distutils.version import LooseVersion
+import subprocess
+import sys
+from typing import TYPE_CHECKING
 
+from methods import print_error, print_warning
+from platform_methods import validate_arch
 
-def is_active():
-    return True
+if TYPE_CHECKING:
+    from SCons.Script.SConscript import SConsEnvironment
 
 
 def get_name():
@@ -14,294 +16,255 @@ def get_name():
 
 
 def can_build():
-    return ("ANDROID_NDK_ROOT" in os.environ)
+    return os.path.exists(get_env_android_sdk_root())
 
 
-def get_platform(platform):
-    return int(platform.split("-")[1])
+def get_tools(env: "SConsEnvironment"):
+    return ["clang", "clang++", "as", "ar", "link"]
 
 
 def get_opts():
-    from SCons.Variables import BoolVariable, EnumVariable
+    from SCons.Variables import BoolVariable
 
     return [
-        ('ANDROID_NDK_ROOT', 'Path to the Android NDK', os.environ.get("ANDROID_NDK_ROOT", 0)),
-        ('ndk_platform', 'Target platform (android-<api>, e.g. "android-18")', "android-18"),
-        EnumVariable('android_arch', 'Target architecture', "armv7", ('armv7', 'armv6', 'arm64v8', 'x86')),
-        BoolVariable('android_neon', 'Enable NEON support (armv7 only)', True),
-        BoolVariable('android_stl', 'Enable Android STL support (for modules)', True)
+        ("ANDROID_HOME", "Path to the Android SDK", get_env_android_sdk_root()),
+        (
+            "ndk_platform",
+            'Target platform (android-<api>, e.g. "android-' + str(get_min_target_api()) + '")',
+            "android-" + str(get_min_target_api()),
+        ),
+        BoolVariable("store_release", "Editor build for Google Play Store (for official builds only)", False),
+        BoolVariable(
+            ("generate_android_binaries", "generate_apk"),
+            "Generate APK, AAB & AAR binaries after building Android library by calling Gradle",
+            False,
+        ),
+        BoolVariable("swappy", "Use Swappy Frame Pacing library", False),
     ]
+
+
+def get_doc_classes():
+    return [
+        "EditorExportPlatformAndroid",
+    ]
+
+
+def get_doc_path():
+    return "doc_classes"
+
+
+# Return the ANDROID_HOME environment variable.
+def get_env_android_sdk_root():
+    return os.environ.get("ANDROID_HOME", os.environ.get("ANDROID_SDK_ROOT", ""))
+
+
+def get_min_sdk_version(platform):
+    return int(platform.split("-")[1])
+
+
+def get_android_ndk_root(env: "SConsEnvironment"):
+    return os.path.join(env["ANDROID_HOME"], "ndk", get_ndk_version())
+
+
+# This is kept in sync with the value in 'platform/android/java/app/config.gradle'.
+def get_ndk_version():
+    return "29.0.14206865"
+
+
+# This is kept in sync with the value in 'platform/android/java/app/config.gradle'.
+def get_min_target_api():
+    return 24
 
 
 def get_flags():
-
-    return [
-        ('tools', False),
-    ]
-
-
-def create(env):
-
-    tools = env['TOOLS']
-    if "mingw" in tools:
-        tools.remove('mingw')
-    if "applelink" in tools:
-        tools.remove("applelink")
-        env.Tool('gcc')
-    return env.Clone(tools=tools)
+    return {
+        "arch": "arm64",
+        "target": "template_debug",
+        "supported": ["mono"],
+    }
 
 
-def configure(env):
-
-    # Workaround for MinGW. See:
-    # http://www.scons.org/wiki/LongCmdLinesOnWin32
-    if (os.name == "nt"):
-
-        import subprocess
-
-        def mySubProcess(cmdline, env):
-            # print("SPAWNED : " + cmdline)
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            proc = subprocess.Popen(cmdline, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, startupinfo=startupinfo, shell=False, env=env)
-            data, err = proc.communicate()
-            rv = proc.wait()
-            if rv:
-                print("=====")
-                print(err)
-                print("=====")
-            return rv
-
-        def mySpawn(sh, escape, cmd, args, env):
-
-            newargs = ' '.join(args[1:])
-            cmdline = cmd + " " + newargs
-
-            rv = 0
-            if len(cmdline) > 32000 and cmd.endswith("ar"):
-                cmdline = cmd + " " + args[1] + " " + args[2] + " "
-                for i in range(3, len(args)):
-                    rv = mySubProcess(cmdline + args[i], env)
-                    if rv:
-                        break
-            else:
-                rv = mySubProcess(cmdline, env)
-
-            return rv
-
-        env['SPAWN'] = mySpawn
-
-    ## Architecture
-
-    if env['android_arch'] not in ['armv7', 'armv6', 'arm64v8', 'x86']:
-        env['android_arch'] = 'armv7'
-
-    neon_text = ""
-    if env["android_arch"] == "armv7" and env['android_neon']:
-        neon_text = " (with NEON)"
-    print("Building for Android (" + env['android_arch'] + ")" + neon_text)
-
-    can_vectorize = True
-    if env['android_arch'] == 'x86':
-        env['ARCH'] = 'arch-x86'
-        env.extra_suffix = ".x86" + env.extra_suffix
-        target_subpath = "x86-4.9"
-        abi_subpath = "i686-linux-android"
-        arch_subpath = "x86"
-        env["x86_libtheora_opt_gcc"] = True
-    elif env['android_arch'] == 'armv6':
-        env['ARCH'] = 'arch-arm'
-        env.extra_suffix = ".armv6" + env.extra_suffix
-        target_subpath = "arm-linux-androideabi-4.9"
-        abi_subpath = "arm-linux-androideabi"
-        arch_subpath = "armeabi"
-        can_vectorize = False
-    elif env["android_arch"] == "armv7":
-        env['ARCH'] = 'arch-arm'
-        target_subpath = "arm-linux-androideabi-4.9"
-        abi_subpath = "arm-linux-androideabi"
-        arch_subpath = "armeabi-v7a"
-        if env['android_neon']:
-            env.extra_suffix = ".armv7.neon" + env.extra_suffix
+# Check if Android NDK version is installed
+# If not, install it.
+def install_ndk_if_needed(env: "SConsEnvironment"):
+    sdk_root = env["ANDROID_HOME"]
+    if not os.path.exists(get_android_ndk_root(env)):
+        extension = ".bat" if os.name == "nt" else ""
+        sdkmanager = os.path.join(sdk_root, "cmdline-tools", "latest", "bin", "sdkmanager" + extension)
+        if os.path.exists(sdkmanager):
+            # Install the Android NDK
+            print("Installing Android NDK...")
+            ndk_download_args = "ndk;" + get_ndk_version()
+            subprocess.check_call([sdkmanager, ndk_download_args])
         else:
-            env.extra_suffix = ".armv7" + env.extra_suffix
-    elif env["android_arch"] == "arm64v8":
-        if get_platform(env["ndk_platform"]) < 21:
-            print("WARNING: android_arch=arm64v8 is not supported by ndk_platform lower than android-21; setting ndk_platform=android-21")
-            env["ndk_platform"] = "android-21"
-        env['ARCH'] = 'arch-arm64'
-        target_subpath = "aarch64-linux-android-4.9"
-        abi_subpath = "aarch64-linux-android"
-        arch_subpath = "arm64-v8a"
-        env.extra_suffix = ".armv8" + env.extra_suffix
+            print_error(
+                f'Cannot find "{sdkmanager}". Please ensure ANDROID_HOME is correct and cmdline-tools'
+                f' are installed, or install NDK version "{get_ndk_version()}" manually.'
+            )
+            sys.exit(255)
+    env["ANDROID_NDK_ROOT"] = get_android_ndk_root(env)
 
-    ## Build type
 
-    if (env["target"].startswith("release")):
-        if (env["optimize"] == "speed"): #optimize for speed (default)
-            env.Append(LINKFLAGS=['-O2'])
-            env.Append(CPPFLAGS=['-O2', '-DNDEBUG', '-ffast-math', '-funsafe-math-optimizations', '-fomit-frame-pointer'])
-        else: #optimize for size
-            env.Append(CPPFLAGS=['-Os', '-DNDEBUG'])
-            env.Append(LINKFLAGS=['-Os'])
+def detect_swappy():
+    archs = ["arm64-v8a", "armeabi-v7a", "x86", "x86_64"]
+    has_swappy = True
+    for arch in archs:
+        if not os.path.isfile(f"thirdparty/swappy-frame-pacing/{arch}/libswappy_static.a"):
+            has_swappy = False
+    return has_swappy
 
-        if (can_vectorize):
-            env.Append(CPPFLAGS=['-ftree-vectorize'])
-        if (env["target"] == "release_debug"):
-            env.Append(CPPFLAGS=['-DDEBUG_ENABLED'])
-    elif (env["target"] == "debug"):
-        env.Append(LINKFLAGS=['-O0'])
-        env.Append(CPPFLAGS=['-O0', '-D_DEBUG', '-UNDEBUG', '-DDEBUG_ENABLED',
-                             '-DDEBUG_MEMORY_ENABLED', '-g', '-fno-limit-debug-info'])
 
-    ## Compiler configuration
+def should_enable_perfetto(env: "SConsEnvironment"):
+    from SCons.Script import ARGUMENTS
 
-    env['SHLIBSUFFIX'] = '.so'
+    cmdline_val = ARGUMENTS.get("profiler")
+    if cmdline_val is not None:
+        return cmdline_val == "perfetto"
+    elif env.debug_features and not (env["store_release"]) and not (env["production"]):
+        return True
+    return False
 
-    if env['PLATFORM'] == 'win32':
-        env.Tool('gcc')
+
+def detect_perfetto():
+    return os.path.exists("thirdparty/perfetto")
+
+
+def configure(env: "SConsEnvironment"):
+    # Validate arch.
+    supported_arches = ["x86_32", "x86_64", "arm32", "arm64"]
+    validate_arch(env["arch"], get_name(), supported_arches)
+
+    if get_min_sdk_version(env["ndk_platform"]) < get_min_target_api():
+        print_warning(
+            "Minimum supported Android target api is %d. Forcing target api %d."
+            % (get_min_target_api(), get_min_target_api())
+        )
+        env["ndk_platform"] = "android-" + str(get_min_target_api())
+
+    install_ndk_if_needed(env)
+    ndk_root = env["ANDROID_NDK_ROOT"]
+
+    # Architecture
+
+    if env["arch"] == "arm32":
+        target_triple = "armv7a-linux-androideabi"
+    elif env["arch"] == "arm64":
+        target_triple = "aarch64-linux-android"
+    elif env["arch"] == "x86_32":
+        target_triple = "i686-linux-android"
+    elif env["arch"] == "x86_64":
+        target_triple = "x86_64-linux-android"
+
+    target_option = ["-target", target_triple + str(get_min_sdk_version(env["ndk_platform"]))]
+    env.Append(ASFLAGS=[target_option, "-c"])
+    env.Append(CCFLAGS=target_option)
+    env.Append(LINKFLAGS=target_option)
+
+    # LTO
+
+    if env["lto"] == "auto":  # LTO benefits for Android (size, performance) haven't been clearly established yet.
+        env["lto"] = "none"
+
+    if env["lto"] != "none":
+        if env["lto"] == "thin":
+            env.Append(CCFLAGS=["-flto=thin"])
+            env.Append(LINKFLAGS=["-flto=thin"])
+        else:
+            env.Append(CCFLAGS=["-flto"])
+            env.Append(LINKFLAGS=["-flto"])
+
+    # Compiler configuration
+
+    env["SHLIBSUFFIX"] = ".so"
+
+    if env["PLATFORM"] == "win32":
         env.use_windows_spawn_fix()
 
-    mt_link = True
-    if (sys.platform.startswith("linux")):
+    if sys.platform.startswith("linux"):
         host_subpath = "linux-x86_64"
-    elif (sys.platform.startswith("darwin")):
+    elif sys.platform.startswith("darwin"):
         host_subpath = "darwin-x86_64"
-    elif (sys.platform.startswith('win')):
-        if (platform.machine().endswith('64')):
+    elif sys.platform.startswith("win"):
+        if platform.machine().endswith("64"):
             host_subpath = "windows-x86_64"
         else:
-            mt_link = False
             host_subpath = "windows"
 
-    if env["android_arch"] == "arm64v8":
-        mt_link = False
+    toolchain_path = os.path.join(ndk_root, "toolchains", "llvm", "prebuilt", host_subpath)
+    compiler_path = os.path.join(toolchain_path, "bin")
 
-    compiler_path = env["ANDROID_NDK_ROOT"] + "/toolchains/llvm/prebuilt/" + host_subpath + "/bin"
-    gcc_toolchain_path = env["ANDROID_NDK_ROOT"] + "/toolchains/" + target_subpath + "/prebuilt/" + host_subpath
-    tools_path = gcc_toolchain_path + "/" + abi_subpath + "/bin"
+    env["CC"] = os.path.join(compiler_path, "clang")
+    env["CXX"] = os.path.join(compiler_path, "clang++")
+    env["AR"] = os.path.join(compiler_path, "llvm-ar")
+    env["RANLIB"] = os.path.join(compiler_path, "llvm-ranlib")
+    env["AS"] = os.path.join(compiler_path, "clang")
 
-    # For Clang to find NDK tools in preference of those system-wide
-    env.PrependENVPath('PATH', tools_path)
+    env.Append(
+        CCFLAGS=(["-fpic", "-ffunction-sections", "-funwind-tables", "-fstack-protector-strong", "-fvisibility=hidden"])
+    )
 
-    ccache_path = os.environ.get("CCACHE")
-    if ccache_path == None:
-        env['CC'] = compiler_path + '/clang'
-        env['CXX'] = compiler_path + '/clang++'
-    else:
-        # there aren't any ccache wrappers available for Android,
-        # to enable caching we need to prepend the path to the ccache binary
-        env['CC'] = ccache_path + ' ' + compiler_path + '/clang'
-        env['CXX'] = ccache_path + ' ' + compiler_path + '/clang++'
-    env['AR'] = tools_path + "/ar"
-    env['RANLIB'] = tools_path + "/ranlib"
-    env['AS'] = tools_path + "/as"
-
-    common_opts = ['-fno-integrated-as', '-gcc-toolchain', gcc_toolchain_path]
-
-    lib_sysroot = env["ANDROID_NDK_ROOT"] + "/platforms/" + env['ndk_platform'] + "/" + env['ARCH']
-
-    ## Compile flags
-
-    if env['android_stl']:
-        env.Append(CPPFLAGS=["-isystem", env["ANDROID_NDK_ROOT"] + "/sources/cxx-stl/llvm-libc++/include"])
-        env.Append(CPPFLAGS=["-isystem", env["ANDROID_NDK_ROOT"] + "/sources/cxx-stl/llvm-libc++abi/include"])
-        env.Append(CXXFLAGS=['-frtti',"-std=gnu++14"])
-    else:
-        env.Append(CXXFLAGS=['-fno-rtti', '-fno-exceptions', '-DNO_SAFE_CAST'])
-
-    ndk_version = get_ndk_version(env["ANDROID_NDK_ROOT"])
-    if ndk_version != None and LooseVersion(ndk_version) >= LooseVersion("15.0.4075724"):
-        print("Using NDK unified headers")
-        sysroot = env["ANDROID_NDK_ROOT"] + "/sysroot"
-        env.Append(CPPFLAGS=["--sysroot="+sysroot])
-        env.Append(CPPFLAGS=["-isystem", sysroot + "/usr/include/" + abi_subpath])
-        env.Append(CPPFLAGS=["-isystem", env["ANDROID_NDK_ROOT"] + "/sources/android/support/include"])
-        # For unified headers this define has to be set manually
-        env.Append(CPPFLAGS=["-D__ANDROID_API__=" + str(get_platform(env['ndk_platform']))])
-    else:
-        print("Using NDK deprecated headers")
-        env.Append(CPPFLAGS=["-isystem", lib_sysroot + "/usr/include"])
-     
-    env.Append(CPPFLAGS='-fpic -ffunction-sections -funwind-tables -fstack-protector-strong -fvisibility=hidden -fno-strict-aliasing'.split())
-    env.Append(CPPFLAGS='-DNO_STATVFS -DGLES_ENABLED'.split())
-
-    env['neon_enabled'] = False
-    if env['android_arch'] == 'x86':
-        target_opts = ['-target', 'i686-none-linux-android']
-        # The NDK adds this if targeting API < 21, so we can drop it when Godot targets it at least
-        env.Append(CPPFLAGS=['-mstackrealign'])
-
-    elif env["android_arch"] == "armv6":
-        target_opts = ['-target', 'armv6-none-linux-androideabi']
-        env.Append(CPPFLAGS='-D__ARM_ARCH_6__ -march=armv6 -mfpu=vfp -mfloat-abi=softfp'.split())
-
-    elif env["android_arch"] == "armv7":
-        target_opts = ['-target', 'armv7-none-linux-androideabi']
-        env.Append(CPPFLAGS='-D__ARM_ARCH_7__ -D__ARM_ARCH_7A__ -march=armv7-a -mfloat-abi=softfp'.split())
-        if env['android_neon']:
-            env['neon_enabled'] = True
-            env.Append(CPPFLAGS=['-mfpu=neon', '-D__ARM_NEON__'])
+    if should_enable_perfetto(env):
+        has_perfetto = detect_perfetto()
+        if not has_perfetto:
+            print_warning(
+                f"Perfetto not detected! It is recommended you run `python {os.path.join('misc', 'scripts', 'install_perfetto.py')}` to download and install Perfetto before compiling.\n"
+            )
         else:
-            env.Append(CPPFLAGS=['-mfpu=vfpv3-d16'])
+            env["profiler"] = "perfetto"
+            env["profiler_path"] = os.path.abspath("thirdparty/perfetto")
 
-    elif env["android_arch"] == "arm64v8":
-        target_opts = ['-target', 'aarch64-none-linux-android']
-        env.Append(CPPFLAGS=['-D__ARM_ARCH_8A__'])
-        env.Append(CPPFLAGS=['-mfix-cortex-a53-835769'])
+    has_swappy = detect_swappy()
+    if not has_swappy:
+        print_warning(
+            f"Swappy Frame Pacing not detected! It is strongly recommended you run `python {os.path.join('misc', 'scripts', 'install_swappy_android.py')}` to download and install Swappy before compiling.\n"
+            + "Without Swappy, Godot apps on Android will inevitably suffer stutter and struggle to keep a consistent framerate. Although Swappy cannot guarantee your app will be stutter-free, not having Swappy will guarantee there will be stutter even on the best phones and the most simple of scenes."
+        )
+        if env["swappy"]:
+            print_error("Use build option `swappy=no` to ignore missing Swappy dependency and build without it.")
+            sys.exit(255)
 
-    env.Append(CPPFLAGS=target_opts)
-    env.Append(CPPFLAGS=common_opts)
+    if get_min_sdk_version(env["ndk_platform"]) >= 24:
+        env.Append(CPPDEFINES=[("_FILE_OFFSET_BITS", 64)])
 
-    ## Link flags
-    if ndk_version != None and LooseVersion(ndk_version) >= LooseVersion("15.0.4075724"):
-        if LooseVersion(ndk_version) >= LooseVersion("17.1.4828580"):
-            env.Append(LINKFLAGS=['-Wl,--exclude-libs,libgcc.a','-Wl,--exclude-libs,libatomic.a','-nostdlib++'])
-        else:
-            env.Append(LINKFLAGS=[env["ANDROID_NDK_ROOT"] +"/sources/cxx-stl/llvm-libc++/libs/"+arch_subpath+"/libandroid_support.a"])
-        env.Append(LINKFLAGS=['-shared', '--sysroot=' + lib_sysroot, '-Wl,--warn-shared-textrel'])
-        env.Append(LIBPATH=[env["ANDROID_NDK_ROOT"] + "/sources/cxx-stl/llvm-libc++/libs/"+arch_subpath+"/"])
-        env.Append(LINKFLAGS=[env["ANDROID_NDK_ROOT"] +"/sources/cxx-stl/llvm-libc++/libs/"+arch_subpath+"/libc++_shared.so"])
-    else:
-        env.Append(LINKFLAGS=['-shared', '--sysroot=' + lib_sysroot, '-Wl,--warn-shared-textrel'])
-        if mt_link:
-            env.Append(LINKFLAGS=['-Wl,--threads'])
-            
-    if env["android_arch"] == "armv7":
-        env.Append(LINKFLAGS='-Wl,--fix-cortex-a8'.split())
-    env.Append(LINKFLAGS='-Wl,--no-undefined -Wl,-z,noexecstack -Wl,-z,relro -Wl,-z,now'.split())
-    env.Append(LINKFLAGS='-Wl,-soname,libgodot_android.so -Wl,--gc-sections'.split())
-    
-    env.Append(LINKFLAGS=target_opts)
-    env.Append(LINKFLAGS=common_opts)
+    if env["arch"] == "x86_32":
+        if has_swappy:
+            env.Append(LIBPATH=["#thirdparty/swappy-frame-pacing/x86"])
+    elif env["arch"] == "x86_64":
+        if has_swappy:
+            env.Append(LIBPATH=["#thirdparty/swappy-frame-pacing/x86_64"])
+    elif env["arch"] == "arm32":
+        env.Append(CCFLAGS=["-march=armv7-a", "-mfloat-abi=softfp"])
+        env.Append(CPPDEFINES=["__ARM_ARCH_7__", "__ARM_ARCH_7A__"])
+        env.Append(CPPDEFINES=["__ARM_NEON__"])
+        if has_swappy:
+            env.Append(LIBPATH=["#thirdparty/swappy-frame-pacing/armeabi-v7a"])
+    elif env["arch"] == "arm64":
+        env.Append(CCFLAGS=["-mfix-cortex-a53-835769"])
+        env.Append(CPPDEFINES=["__ARM_ARCH_8A__"])
+        if has_swappy:
+            env.Append(LIBPATH=["#thirdparty/swappy-frame-pacing/arm64-v8a"])
 
-    env.Append(LIBPATH=[env["ANDROID_NDK_ROOT"] + '/toolchains/' + target_subpath + '/prebuilt/' +
-                        host_subpath + '/lib/gcc/' + abi_subpath + '/4.9.x'])
-    env.Append(LIBPATH=[env["ANDROID_NDK_ROOT"] +
-                        '/toolchains/' + target_subpath + '/prebuilt/' + host_subpath + '/' + abi_subpath + '/lib'])
+    env.Append(CCFLAGS=["-ffp-contract=off"])
 
-    env.Append(CPPPATH=['#platform/android'])
-    env.Append(CPPFLAGS=['-DANDROID_ENABLED', '-DUNIX_ENABLED', '-DNO_FCNTL', '-DMPC_FIXED_POINT'])
-    env.Append(LIBS=['OpenSLES', 'EGL', 'GLESv3', 'android', 'log', 'z', 'dl'])
+    # Link flags
 
-    # TODO: Move that to opus module's config
-    if 'module_opus_enabled' in env and env['module_opus_enabled']:
-        if (env["android_arch"] == "armv6" or env["android_arch"] == "armv7"):
-            env.Append(CFLAGS=["-DOPUS_ARM_OPT"])
-        env.opus_fixed_point = "yes"
+    env.Append(LINKFLAGS=["-Wl,--gc-sections", "-Wl,--no-undefined", "-Wl,-z,now"])
+    env.Append(LINKFLAGS=["-Wl,--build-id"])
+    env.Append(LINKFLAGS=["-Wl,-soname,libgodot_android.so"])
 
-# Return NDK version string in source.properties (adapted from the Chromium project).
-def get_ndk_version(path):
-    if path == None:
-        return None
-    prop_file_path = os.path.join(path, "source.properties")
-    try:
-        with open(prop_file_path) as prop_file:
-            for line in prop_file:
-                key_value = list(map(lambda x: x.strip(), line.split("=")))
-                if key_value[0] == "Pkg.Revision":
-                    return key_value[1]
-    except:
-        print("Could not read source prop file '%s'" % prop_file_path)
-    return None
+    env.Prepend(CPPPATH=["#platform/android"])
+    env.Append(CPPDEFINES=["ANDROID_ENABLED", "UNIX_ENABLED"])
+    env.Append(LIBS=["OpenSLES", "EGL", "android", "log", "z", "dl"])
+
+    if env["vulkan"]:
+        env.Append(CPPDEFINES=["VULKAN_ENABLED"])
+
+        if has_swappy:
+            env.Append(CPPDEFINES=["SWAPPY_FRAME_PACING_ENABLED"])
+            env.Append(LIBS=["swappy_static"])
+        if not env["use_volk"]:
+            env.Append(LIBS=["vulkan"])
+
+    if env["opengl3"]:
+        env.Append(CPPDEFINES=["GLES3_ENABLED"])
+        env.Append(LIBS=["GLESv3"])

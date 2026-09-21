@@ -37,8 +37,8 @@ typedef int (*WebPWorkerHook)(void*, void*);
 
 // Synchronization object used to launch job in the worker thread
 typedef struct {
-  void* impl_;            // platform-dependent implementation worker details
-  WebPWorkerStatus status_;
+  void* impl;             // platform-dependent implementation worker details
+  WebPWorkerStatus status;
   WebPWorkerHook hook;    // hook to call
   void* data1;            // first argument passed to 'hook'
   void* data2;            // second argument passed to 'hook'
@@ -87,4 +87,4 @@ WEBP_EXTERN const WebPWorkerInterface* WebPGetWorkerInterface(void);
 }    // extern "C"
 #endif
 
-#endif  /* WEBP_UTILS_THREAD_UTILS_H_ */
+#endif  // WEBP_UTILS_THREAD_UTILS_H_

@@ -1,177 +1,250 @@
-/*************************************************************************/
-/*  emws_peer.cpp                                                        */
-/*************************************************************************/
-/*                       This file is part of:                           */
-/*                           GODOT ENGINE                                */
-/*                      https://godotengine.org                          */
-/*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
-#ifdef JAVASCRIPT_ENABLED
+/**************************************************************************/
+/*  emws_peer.cpp                                                         */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
 
 #include "emws_peer.h"
+
+#ifdef WEB_ENABLED
+
 #include "core/io/ip.h"
+#include "core/object/class_db.h"
 
-void EMWSPeer::set_sock(int p_sock) {
-
-	peer_sock = p_sock;
-	in_buffer.clear();
-	queue_count = 0;
+WebSocketPeer *EMWSPeer::_create(bool p_notify_postinitialize) {
+	return static_cast<WebSocketPeer *>(ClassDB::creator<EMWSPeer>(p_notify_postinitialize));
 }
 
-void EMWSPeer::set_write_mode(WriteMode p_mode) {
-	write_mode = p_mode;
+void EMWSPeer::_esws_on_connect(void *p_obj, char *p_proto) {
+	EMWSPeer *peer = static_cast<EMWSPeer *>(p_obj);
+	peer->ready_state = STATE_OPEN;
+	peer->selected_protocol.clear();
+	peer->selected_protocol.append_utf8(p_proto);
 }
 
-EMWSPeer::WriteMode EMWSPeer::get_write_mode() const {
-	return write_mode;
+void EMWSPeer::_esws_on_message(void *p_obj, const uint8_t *p_data, int p_data_size, int p_is_string) {
+	EMWSPeer *peer = static_cast<EMWSPeer *>(p_obj);
+	uint8_t is_string = p_is_string ? 1 : 0;
+	peer->in_buffer.write_packet(p_data, p_data_size, &is_string);
 }
 
-void EMWSPeer::read_msg(uint8_t *p_data, uint32_t p_size, bool p_is_string) {
+void EMWSPeer::_esws_on_error(void *p_obj) {
+	EMWSPeer *peer = static_cast<EMWSPeer *>(p_obj);
+	peer->ready_state = STATE_CLOSED;
+}
 
-	if (in_buffer.space_left() < p_size + 5) {
-		ERR_EXPLAIN("Buffer full! Dropping data");
-		ERR_FAIL();
+void EMWSPeer::_esws_on_close(void *p_obj, int p_code, const char *p_reason, int p_was_clean) {
+	EMWSPeer *peer = static_cast<EMWSPeer *>(p_obj);
+	peer->close_code = p_code;
+	peer->close_reason.clear();
+	peer->close_reason.append_utf8(p_reason);
+	peer->ready_state = STATE_CLOSED;
+}
+
+Error EMWSPeer::connect_to_url(const String &p_url, const Ref<TLSOptions> &p_tls_options) {
+	ERR_FAIL_COND_V(p_url.is_empty(), ERR_INVALID_PARAMETER);
+	ERR_FAIL_COND_V(p_tls_options.is_valid() && p_tls_options->is_server(), ERR_INVALID_PARAMETER);
+	ERR_FAIL_COND_V(ready_state != STATE_CLOSED && ready_state != STATE_CLOSING, ERR_ALREADY_IN_USE);
+
+	_clear();
+
+	String host;
+	String path;
+	String scheme;
+	String fragment;
+	int port = 0;
+	Error err = p_url.parse_url(scheme, host, port, path, fragment);
+	ERR_FAIL_COND_V_MSG(err != OK, err, "Invalid URL: " + p_url);
+
+	if (scheme.is_empty()) {
+		scheme = "ws://";
+	}
+	ERR_FAIL_COND_V_MSG(scheme != "ws://" && scheme != "wss://", ERR_INVALID_PARAMETER, vformat("Invalid protocol: \"%s\" (must be either \"ws://\" or \"wss://\").", scheme));
+
+	String proto_string;
+	for (int i = 0; i < supported_protocols.size(); i++) {
+		if (i != 0) {
+			proto_string += ",";
+		}
+		proto_string += supported_protocols[i];
 	}
 
-	uint8_t is_string = p_is_string ? 1 : 0;
-	in_buffer.write((uint8_t *)&p_size, 4);
-	in_buffer.write((uint8_t *)&is_string, 1);
-	in_buffer.write(p_data, p_size);
-	queue_count++;
+	if (handshake_headers.size()) {
+		WARN_PRINT_ONCE("Custom headers are not supported in Web platform.");
+	}
+
+	requested_url = scheme + host;
+
+	if (port && ((scheme == "ws://" && port != 80) || (scheme == "wss://" && port != 443))) {
+		requested_url += ":" + String::num_int64(port);
+	}
+
+	if (!path.is_empty()) {
+		requested_url += path;
+	}
+
+	peer_sock = godot_js_websocket_create(this, requested_url.utf8().get_data(), proto_string.utf8().get_data(), &_esws_on_connect, &_esws_on_message, &_esws_on_error, &_esws_on_close);
+	if (peer_sock == -1) {
+		return FAILED;
+	}
+	in_buffer.resize(Math::nearest_shift((uint32_t)inbound_buffer_size), max_queued_packets);
+	packet_buffer.resize(inbound_buffer_size);
+	ready_state = STATE_CONNECTING;
+	return OK;
+}
+
+Error EMWSPeer::accept_stream(const Ref<StreamPeer> &p_stream) {
+	WARN_PRINT_ONCE("Acting as WebSocket server is not supported in Web platforms.");
+	return ERR_UNAVAILABLE;
+}
+
+Error EMWSPeer::_send(const uint8_t *p_buffer, int p_buffer_size, bool p_binary) {
+	ERR_FAIL_COND_V(outbound_buffer_size > 0 && (get_current_outbound_buffered_amount() + p_buffer_size >= outbound_buffer_size), ERR_OUT_OF_MEMORY);
+
+	if (godot_js_websocket_send(peer_sock, p_buffer, p_buffer_size, p_binary ? 1 : 0) != 0) {
+		return FAILED;
+	}
+	return OK;
+}
+
+Error EMWSPeer::send(const uint8_t *p_buffer, int p_buffer_size, WriteMode p_mode) {
+	return _send(p_buffer, p_buffer_size, p_mode == WRITE_MODE_BINARY);
 }
 
 Error EMWSPeer::put_packet(const uint8_t *p_buffer, int p_buffer_size) {
-
-	int is_bin = write_mode == WebSocketPeer::WRITE_MODE_BINARY ? 1 : 0;
-
-	/* clang-format off */
-	EM_ASM({
-		var sock = Module.IDHandler.get($0);
-		var bytes_array = new Uint8Array($2);
-		var i = 0;
-
-		for(i=0; i<$2; i++) {
-			bytes_array[i] = getValue($1+i, 'i8');
-		}
-
-		if ($3) {
-			sock.send(bytes_array.buffer);
-		} else {
-			var string = new TextDecoder("utf-8").decode(bytes_array);
-			sock.send(string);
-		}
-	}, peer_sock, p_buffer, p_buffer_size, is_bin);
-	/* clang-format on */
-
-	return OK;
-};
+	return _send(p_buffer, p_buffer_size, true);
+}
 
 Error EMWSPeer::get_packet(const uint8_t **r_buffer, int &r_buffer_size) {
-
-	if (queue_count == 0)
+	if (in_buffer.packets_left() == 0) {
 		return ERR_UNAVAILABLE;
-
-	uint32_t to_read = 0;
-	uint32_t left = 0;
-	uint8_t is_string = 0;
-	r_buffer_size = 0;
-
-	in_buffer.read((uint8_t *)&to_read, 4);
-	--queue_count;
-	left = in_buffer.data_left();
-
-	if (left < to_read + 1) {
-		in_buffer.advance_read(left);
-		return FAILED;
 	}
 
-	in_buffer.read(&is_string, 1);
-	_was_string = is_string == 1;
-	in_buffer.read(packet_buffer, to_read);
-	*r_buffer = packet_buffer;
-	r_buffer_size = to_read;
+	int read = 0;
+	Error err = in_buffer.read_packet(packet_buffer.ptrw(), packet_buffer.size(), &was_string, read);
+	ERR_FAIL_COND_V(err != OK, err);
+
+	*r_buffer = packet_buffer.ptr();
+	r_buffer_size = read;
 
 	return OK;
-};
+}
 
 int EMWSPeer::get_available_packet_count() const {
+	return in_buffer.packets_left();
+}
 
-	return queue_count;
-};
+int EMWSPeer::get_current_outbound_buffered_amount() const {
+	if (peer_sock != -1) {
+		return godot_js_websocket_buffered_amount(peer_sock);
+	}
+	return 0;
+}
 
 bool EMWSPeer::was_string_packet() const {
+	return was_string;
+}
 
-	return _was_string;
-};
-
-bool EMWSPeer::is_connected_to_host() const {
-
-	return peer_sock != -1;
-};
-
-void EMWSPeer::close(int p_code, String p_reason) {
-
+void EMWSPeer::_clear() {
 	if (peer_sock != -1) {
-		/* clang-format off */
-		EM_ASM({
-			var sock = Module.IDHandler.get($0);
-			var code = $1;
-			var reason = UTF8ToString($2);
-			sock.close(code, reason);
-			Module.IDHandler.remove($0);
-		}, peer_sock, p_code, p_reason.utf8().get_data());
-		/* clang-format on */
+		godot_js_websocket_destroy(peer_sock);
+		peer_sock = -1;
 	}
-	peer_sock = -1;
-	queue_count = 0;
+	ready_state = STATE_CLOSED;
+	was_string = 0;
+	close_code = -1;
+	close_reason.clear();
+	selected_protocol.clear();
+	requested_url.clear();
 	in_buffer.clear();
-};
+	packet_buffer.clear();
+}
 
-IP_Address EMWSPeer::get_connected_host() const {
+void EMWSPeer::close(int p_code, const String &p_reason) {
+	if (p_code < 0) {
+		if (peer_sock != -1) {
+			godot_js_websocket_destroy(peer_sock);
+			peer_sock = -1;
+		}
+		ready_state = STATE_CLOSED;
+	}
+	if (ready_state == STATE_CONNECTING || ready_state == STATE_OPEN) {
+		ready_state = STATE_CLOSING;
+		if (peer_sock != -1) {
+			godot_js_websocket_close(peer_sock, p_code, p_reason.utf8().get_data());
+		} else {
+			ready_state = STATE_CLOSED;
+		}
+	}
+	in_buffer.clear();
+	packet_buffer.clear();
+}
 
-	ERR_EXPLAIN("Not supported in HTML5 export");
-	ERR_FAIL_V(IP_Address());
-};
+void EMWSPeer::poll() {
+	// Automatically polled by the navigator.
+}
+
+WebSocketPeer::State EMWSPeer::get_ready_state() const {
+	return ready_state;
+}
+
+int EMWSPeer::get_close_code() const {
+	return close_code;
+}
+
+String EMWSPeer::get_close_reason() const {
+	return close_reason;
+}
+
+String EMWSPeer::get_selected_protocol() const {
+	return selected_protocol;
+}
+
+String EMWSPeer::get_requested_url() const {
+	return requested_url;
+}
+
+IPAddress EMWSPeer::get_connected_host() const {
+	ERR_FAIL_V_MSG(IPAddress(), "Not supported in Web export.");
+}
 
 uint16_t EMWSPeer::get_connected_port() const {
+	ERR_FAIL_V_MSG(0, "Not supported in Web export.");
+}
 
-	ERR_EXPLAIN("Not supported in HTML5 export");
-	ERR_FAIL_V(0);
-};
+void EMWSPeer::set_no_delay(bool p_enabled) {
+	ERR_FAIL_MSG("'set_no_delay' is not supported in Web export.");
+}
 
 EMWSPeer::EMWSPeer() {
-	peer_sock = -1;
-	queue_count = 0;
-	_was_string = false;
-	in_buffer.resize(16);
-	write_mode = WRITE_MODE_BINARY;
-};
+}
 
 EMWSPeer::~EMWSPeer() {
+	_clear();
+}
 
-	in_buffer.resize(0);
-	close();
-};
-
-#endif // JAVASCRIPT_ENABLED
+#endif // WEB_ENABLED

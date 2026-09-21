@@ -1,96 +1,130 @@
-/*************************************************************************/
-/*  resource_importer_texture.h                                          */
-/*************************************************************************/
-/*                       This file is part of:                           */
-/*                           GODOT ENGINE                                */
-/*                      https://godotengine.org                          */
-/*************************************************************************/
-/* Copyright (c) 2007-2018 Juan Linietsky, Ariel Manzur.                 */
-/* Copyright (c) 2014-2018 Godot Engine contributors (cf. AUTHORS.md)    */
-/*                                                                       */
-/* Permission is hereby granted, free of charge, to any person obtaining */
-/* a copy of this software and associated documentation files (the       */
-/* "Software"), to deal in the Software without restriction, including   */
-/* without limitation the rights to use, copy, modify, merge, publish,   */
-/* distribute, sublicense, and/or sell copies of the Software, and to    */
-/* permit persons to whom the Software is furnished to do so, subject to */
-/* the following conditions:                                             */
-/*                                                                       */
-/* The above copyright notice and this permission notice shall be        */
-/* included in all copies or substantial portions of the Software.       */
-/*                                                                       */
-/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,       */
-/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF    */
-/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.*/
-/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY  */
-/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,  */
-/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE     */
-/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                */
-/*************************************************************************/
+/**************************************************************************/
+/*  resource_importer_texture.h                                           */
+/**************************************************************************/
+/*                         This file is part of:                          */
+/*                             GODOT ENGINE                               */
+/*                        https://godotengine.org                         */
+/**************************************************************************/
+/* Copyright (c) 2014-present Godot Engine contributors (see AUTHORS.md). */
+/* Copyright (c) 2007-2014 Juan Linietsky, Ariel Manzur.                  */
+/*                                                                        */
+/* Permission is hereby granted, free of charge, to any person obtaining  */
+/* a copy of this software and associated documentation files (the        */
+/* "Software"), to deal in the Software without restriction, including    */
+/* without limitation the rights to use, copy, modify, merge, publish,    */
+/* distribute, sublicense, and/or sell copies of the Software, and to     */
+/* permit persons to whom the Software is furnished to do so, subject to  */
+/* the following conditions:                                              */
+/*                                                                        */
+/* The above copyright notice and this permission notice shall be         */
+/* included in all copies or substantial portions of the Software.        */
+/*                                                                        */
+/* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,        */
+/* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF     */
+/* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. */
+/* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY   */
+/* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,   */
+/* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE      */
+/* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
+/**************************************************************************/
 
-#ifndef RESOURCEIMPORTTEXTURE_H
-#define RESOURCEIMPORTTEXTURE_H
+#pragma once
 
-#include "core/image.h"
-#include "core/io/resource_import.h"
+#include "core/io/file_access.h"
+#include "core/io/image.h"
+#include "core/io/resource_importer.h"
+#include "servers/rendering/rendering_server_enums.h"
 
-class StreamTexture;
+class CompressedTexture2D;
 
 class ResourceImporterTexture : public ResourceImporter {
-	GDCLASS(ResourceImporterTexture, ResourceImporter)
+	GDCLASS(ResourceImporterTexture, ResourceImporter);
+
+public:
+	enum CompressMode {
+		COMPRESS_LOSSLESS,
+		COMPRESS_LOSSY,
+		COMPRESS_VRAM_COMPRESSED,
+		COMPRESS_VRAM_UNCOMPRESSED,
+		COMPRESS_BASIS_UNIVERSAL
+	};
+
+	enum ChannelRemap {
+		REMAP_R,
+		REMAP_G,
+		REMAP_B,
+		REMAP_A,
+		REMAP_INV_R,
+		REMAP_INV_G,
+		REMAP_INV_B,
+		REMAP_INV_A,
+		REMAP_UNUSED,
+		REMAP_0,
+		REMAP_1,
+	};
 
 protected:
 	enum {
 		MAKE_3D_FLAG = 1,
-		MAKE_SRGB_FLAG = 2,
+		MAKE_ROUGHNESS_FLAG = 2,
 		MAKE_NORMAL_FLAG = 4
 	};
 
-	Mutex *mutex;
-	Map<StringName, int> make_flags;
+	Mutex mutex;
+	struct MakeInfo {
+		int flags = 0;
+		String normal_path_for_roughness;
+		RSE::TextureDetectRoughnessChannel channel_for_roughness = RSE::TEXTURE_DETECT_ROUGHNESS_R;
+	};
 
-	static void _texture_reimport_srgb(const Ref<StreamTexture> &p_tex);
-	static void _texture_reimport_3d(const Ref<StreamTexture> &p_tex);
-	static void _texture_reimport_normal(const Ref<StreamTexture> &p_tex);
+	HashMap<StringName, MakeInfo> make_flags;
+
+	static void _texture_reimport_roughness(const Ref<CompressedTexture2D> &p_tex, const String &p_normal_path, RSE::TextureDetectRoughnessChannel p_channel);
+	static void _texture_reimport_3d(const Ref<CompressedTexture2D> &p_tex);
+	static void _texture_reimport_normal(const Ref<CompressedTexture2D> &p_tex);
 
 	static ResourceImporterTexture *singleton;
+	static const char *compression_formats[];
+
+	void _save_ctex(const Ref<Image> &p_image, const String &p_to_path, CompressMode p_compress_mode, float p_lossy_quality, const Image::BasisUniversalPackerParams &p_basisu_params, Image::CompressMode p_vram_compression, Image::CompressProfile p_vram_compression_profile, bool p_mipmaps, bool p_detect_3d, bool p_detect_srgb, bool p_detect_normal, bool p_force_normal, bool p_srgb_friendly, uint32_t p_limit_mipmap, const Ref<Image> &p_normal, Image::RoughnessChannel p_roughness_channel, bool p_preserve_alpha_test_coverage, float p_alpha_test_threshold);
+	void _save_editor_meta(const Dictionary &p_metadata, const String &p_to_path);
+	Dictionary _load_editor_meta(const String &p_to_path) const;
+
+	static inline void _remap_channels(Ref<Image> &r_image, ChannelRemap p_options[4]);
+	static inline void _clamp_hdr_exposure(Ref<Image> &r_image);
+	static inline void _invert_y_channel(Ref<Image> &r_image);
 
 public:
+	static void save_to_ctex_format(Ref<FileAccess> f, const Ref<Image> &p_image, CompressMode p_compress_mode, Image::UsedChannels p_channels, Image::CompressMode p_compress_format, Image::CompressProfile p_compress_profile, float p_lossy_quality, const Image::BasisUniversalPackerParams &p_basisu_params, Image::BPTCFormat p_bptc_format);
+
 	static ResourceImporterTexture *get_singleton() { return singleton; }
-	virtual String get_importer_name() const;
-	virtual String get_visible_name() const;
-	virtual void get_recognized_extensions(List<String> *p_extensions) const;
-	virtual String get_save_extension() const;
-	virtual String get_resource_type() const;
+	virtual String get_importer_name() const override;
+	virtual String get_visible_name() const override;
+	virtual void get_recognized_extensions(List<String> *p_extensions) const override;
+	virtual String get_save_extension() const override;
+	virtual String get_resource_type() const override;
 
 	enum Preset {
 		PRESET_DETECT,
 		PRESET_2D,
-		PRESET_2D_PIXEL,
 		PRESET_3D,
 	};
 
-	enum CompressMode {
-		COMPRESS_LOSSLESS,
-		COMPRESS_LOSSY,
-		COMPRESS_VIDEO_RAM,
-		COMPRESS_UNCOMPRESSED
-	};
+	virtual int get_preset_count() const override;
+	virtual String get_preset_name(int p_idx) const override;
 
-	virtual int get_preset_count() const;
-	virtual String get_preset_name(int p_idx) const;
+	virtual void get_import_options(const String &p_path, List<ImportOption> *r_options, int p_preset = 0) const override;
+	virtual bool get_option_visibility(const String &p_path, const String &p_option, const HashMap<StringName, Variant> &p_options) const override;
 
-	virtual void get_import_options(List<ImportOption> *r_options, int p_preset = 0) const;
-	virtual bool get_option_visibility(const String &p_option, const Map<StringName, Variant> &p_options) const;
+	virtual Error import(ResourceUID::ID p_source_id, const String &p_source_file, const String &p_save_path, const HashMap<StringName, Variant> &p_options, List<String> *r_platform_variants, List<String> *r_gen_files = nullptr, Variant *r_metadata = nullptr) override;
 
-	void _save_stex(const Ref<Image> &p_image, const String &p_to_path, int p_compress_mode, float p_lossy_quality, Image::CompressMode p_vram_compression, bool p_mipmaps, int p_texture_flags, bool p_streamable, bool p_detect_3d, bool p_detect_srgb, bool p_force_rgbe, bool p_detect_normal, bool p_force_normal);
-
-	virtual Error import(const String &p_source_file, const String &p_save_path, const Map<StringName, Variant> &p_options, List<String> *r_platform_variants, List<String> *r_gen_files = NULL);
+	virtual bool can_import_threaded() const override { return true; }
 
 	void update_imports();
 
-	ResourceImporterTexture();
+	virtual bool are_import_settings_valid(const String &p_path, const Dictionary &p_meta) const override;
+	virtual String get_import_settings_string() const override;
+
+	ResourceImporterTexture(bool p_singleton = false);
 	~ResourceImporterTexture();
 };
-
-#endif // RESOURCEIMPORTTEXTURE_H
